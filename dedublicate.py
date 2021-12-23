@@ -1,5 +1,6 @@
 from compare import compare, compare_new, getthumb, MIN, NotAnImage
 from shutil import move
+from multiprocessing import Process, Queue
 
 import sys
 import os
@@ -17,6 +18,39 @@ def scan_dir(_dir):
                 pass
     return r
     
+def prl_compare(q_in, q_out):
+    scanned = []
+    while True:
+        try:
+            f, thumb = q_in.get()
+            scanned += [(f, thumb)]
+        except ValueError:
+            break
+
+    checked = []
+    for k1, v1 in scanned:
+        print('Checking %s' % k1, end=' ... ', flush=1)
+        for k2, v2 in scanned:
+            to_check = set([k1,k2])
+            if k1 != k2 and to_check not in checked:
+                checked += [to_check]
+                # q_out.put(to_check)
+
+
+def prl_scan_dir(_dir, q):
+    n = 0
+    for path, dirs, files in os.walk(_dir):
+        if dirs:
+            dirs.pop()
+        for f in [ "%s%s" % (path, f) for f in files]:
+            try:
+                q.put((f, getthumb(f)))
+                if not n % 100: print(n, f)
+                n += 1
+            except NotAnImage:
+                pass
+    q.put((False,))
+
 def compare_images(scanned, minv):
     checked = []
     res = []
@@ -76,7 +110,17 @@ def move_images(compared, _dir):
     
 if __name__ == '__main__':
     try:
-        move_images(compare_images(scan_dir(sys.argv[1]), MIN), '%s/moved/' % sys.argv[1])
+        file_queue = Queue()
+        pairs_queue = Queue()
+        scan_proc = Process(target=prl_scan_dir, args=(sys.argv[1], file_queue))
+        pair_proc = Process(target=prl_compare, args=(file_queue, pairs_queue))
+        # scan_proc = Process(target=prl_scan_dir, args=(sys.argv[1], file_queue))
+        for p in [scan_proc, pair_proc]:
+            p.start()
+        for p in [scan_proc, pair_proc]:
+            p.join()
+        # imgs_all = compare_images(MIN)
+        # move_images(imgs_all, '%s/moved/' % sys.argv[1])
     except IndexError as e:
         print(e)
         print(""" USAGE:
